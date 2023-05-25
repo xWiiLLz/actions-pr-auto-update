@@ -4,7 +4,7 @@
 
 The goal of this action is to automatically update pull requests when their target branch is updated. This is useful when you have a long-running pull request that is not yet ready to be merged, but you want to keep it up to date with the target branch. Several customizations are available to control which pull requests are updated. Bot pull requests such as dependabot and closed pull requests are always ignored.
 
-This project was forked from the cited repo below. This fork focuses on adding additional configurations and modernizing the tools and dependencies. <sup>[1](#citation)</sup>
+This project was forked from the cited repo below. This fork focuses on adding additional configurations and modernizing the tools and dependencies. <sup>[1](#citations)</sup>
 
 ## Usage
 
@@ -88,4 +88,4 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Citations
 
-^[1]^ **Forked project:** [maxkomarychev/pr-updater-action](https://github.com/maxkomarychev/pr-updater-action)
+<sup>[1]</sup> <ins>Forked from:</ins> [maxkomarychev/pr-updater-action](https://github.com/maxkomarychev/pr-updater-action)
