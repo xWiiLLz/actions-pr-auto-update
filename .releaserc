@@ -1,4 +1,5 @@
 {
+  "ci": true,
   "branches": [
     { "name": "+([0-9])?(.{+([0-9]),x}).x", "range": "1.x.x", "channel": "v1" },
     "main",
@@ -15,9 +16,15 @@
       }
     ],
     [
-      "@semantic-release/npm",
+      "@semantic-release/github",
       {
-        "npmPublish": false
+        "assets": [
+          "bin/index.js",
+          "CHANGELOG.md",
+          "README.md",
+          "package.json",
+          "yarn.lock"
+        ]
       }
     ],
     [
@@ -30,15 +37,7 @@
           "package.json",
           "yarn.lock"
         ],
-        "message": "chore: release ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-      }
-    ],
-    [
-      "@semantic-release/github",
-      {
-        "assets": [{
-          "path": "bin"
-        }]
+        "message": "chore: release <%= nextRelease.version %> - <%= new Date().toLocaleDateString('en-US', {year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' }) %> [skip ci]\n\n<%= nextRelease.notes %>"
       }
     ]
   ]
