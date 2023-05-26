@@ -1,5 +1,5 @@
 {
-  "private": "false",
+  "private": "true",
   "name": "actions-pr-auto-update",
   "version": "1.0.0",
   "description": "A configurable GitHub Action to keep pull requests up-to-date.",
