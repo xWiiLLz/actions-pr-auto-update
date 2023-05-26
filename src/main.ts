@@ -127,7 +127,7 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
 
   try {
     /* Fetch the token value */
-    const token: string | undefined = process.env.GITHUB_TOKEN ?? github.token;
+    const token: string | undefined = process.env.GITHUB_TOKEN;
 
     if (typeof token === 'undefined' || token.length === 0) {
       core.error(new Error('No token could be found. Please provide a token to use this action or use the GITHUB_TOKEN environment variable.'));
