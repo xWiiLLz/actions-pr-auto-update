@@ -1,4 +1,4 @@
-import type { RestEndpointMethods } from '@octokit/plugin-rest-endpoint-methods/dist-types/generated/method-types';
+import type { RestEndpointMethods } from '@actions/github/node_modules/@octokit/plugin-rest-endpoint-methods/dist-types/generated/method-types';
 import type * as GitHub from '@actions/github';
 import type * as Core from '@actions/core';
 
@@ -9,25 +9,9 @@ type PRUpdateRun = Awaited<
 >;
 
 export default async function run(core: typeof Core, github: typeof GitHub): Promise<void> {
-  function fetchInput(
-    key: string,
-    required: boolean = false,
-    fallback: string | undefined = undefined,
-  ): string | undefined {
-    let value: string | undefined;
-    try {
-      value = core.getInput(key, { required }) ?? fallback;
-    } catch (error: any) {
-      core.error(error);
-      core.setFailed(error.message);
-    }
-
-    return value;
-  }
-
   async function fetchPullRequests(
     endpoint: RestEndpointMethods,
-    limit: number = 100,
+    limit = 100,
   ): Promise<Awaited<PRListPromise> | void> {
     try {
       const result = await endpoint.pulls.list({
@@ -49,9 +33,13 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       }
 
       return result;
-    } catch (error: any) {
-      core.error(error);
-      core.setFailed(error.message);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        core.error(error);
+        core.setFailed(error.message);
+      } else {
+        core.error('An unknown error occurred while fetching pull requests.');
+      }
     }
   }
 
@@ -76,15 +64,15 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       if (prs.length !== initialCount) core.info(`Excluded ${initialCount - prs.length} bot PRs.`);
 
       const includeDrafts: boolean | undefined =
-        fetchInput('include_drafts') === 'true' ? true : false;
+      core.getInput('include_drafts') === 'true' ? true : false;
 
-      let strhold = fetchInput('include_labels');
+      let strhold = core.getInput('include_labels');
       const allowLabels: string[] | undefined =
         typeof strhold !== 'undefined' && strhold.length !== 0
           ? strhold.split(',').map((i) => i.trim())
           : undefined;
 
-      strhold = fetchInput('exclude_labels');
+      strhold = core.getInput('exclude_labels');
       const denyLabels: string[] | undefined =
         typeof strhold !== 'undefined' && strhold.length !== 0
           ? strhold.split(',').map((i) => i.trim())
@@ -119,31 +107,58 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
 
         return allow;
       });
-    } catch (error: any) {
-      core.error(error);
-      core.setFailed(error.message);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        core.error(error);
+        core.setFailed(error.message);
+      } else {
+        core.error('An unknown error occurred while filtering pull requests.');
+      }
     }
   }
 
+  let token: string;
+  let client: ReturnType<typeof github.getOctokit>;
+
+  let exit = false;
   try {
-    /* Fetch the token value */
-    const token: string | undefined = fetchInput('token', true, process.env.GITHUB_TOKEN);
+    token = core.getInput('token', { required: true }) ?? process.env.GITHUB_TOKEN;
+    if (typeof token === 'undefined') {
+      core.error('No token was provided.');
+      core.setFailed('No token was provided.');
+      exit = true;
+    } else {
+      client = github.getOctokit(token);
+      if (!client) {
+        core.error('Unable to create an authenticated client.');
+        core.setFailed('Unable to create an authenticated client.');
+        exit = true;
+      } else {
+        /* Check if the token is valid */
+        await client.rest.users.getAuthenticated();
 
-    if (typeof token === 'undefined' || token.length === 0) {
-      core.error(new Error('No token could be found. Please provide a token to use this action or use the GITHUB_TOKEN environment variable.'));
-      core.setFailed('No token could be found. Please provide a token to use this action or use the GITHUB_TOKEN environment variable.');
-      return;
+        core.info('Successfully authenticated with the GitHub API.');
+
+        if (github.context.payload.action === 'deleted') {
+          core.info('The ref was deleted, so there is no need to update any pull requests.');
+          return;
+        }
+      }
     }
-
-    let client: ReturnType<typeof github.getOctokit> = github.getOctokit(token);
-
-    if (typeof client === 'undefined') {
-      core.error(new Error('Access was not granted. Please ensure the provided github token has the necessary access to the repository.'));
-      core.setFailed('Access was not granted. Please ensure the provided github token has the necessary access to the repository.');
-      return;
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      core.error(error);
+      core.setFailed(error.message);
+    } else {
+      core.error('An unknown error occurred while authenticating with the GitHub API.');
     }
+    exit = true;
+  }
 
-    const strhold = fetchInput('limit');
+  if (exit) return;
+
+  try {
+    const strhold = core.getInput('limit');
     const limit: number | undefined =
       typeof strhold !== 'undefined' && strhold.length !== 0
         ? parseInt(strhold, 10)
@@ -154,14 +169,16 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
     if (typeof limit !== 'undefined') {
       const pages = Math.ceil(limit / 100);
       do {
-        const nextPage = await fetchPullRequests(client.rest as any, pages === 1 ? limit : 100);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const nextPage = await fetchPullRequests(client!.rest, pages === 1 ? limit : 100);
         if (!nextPage) break;
 
         const cleaned = filterPullRequests(nextPage.data) ?? [];
         prs.push(...cleaned);
       } while (prs.length < limit && prs.length < 100 * pages);
     } else {
-      const page = await fetchPullRequests(client.rest as any);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const page = await fetchPullRequests(client!.rest);
       if (page) prs.push(...(filterPullRequests(page.data) ?? []));
     }
 
@@ -199,7 +216,7 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       results = results.sort((a, b) => a.pr.number - b.pr.number);
 
       core.info(
-        `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 as any ? '❌' : '✅'}  #${r.pr.number} [${r.pr.title}](${r.pr.url})`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`,
+        `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 as 202 ? '❌' : '✅'}  #${r.pr.number} [${r.pr.title}](${r.pr.url})`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`,
       );
 
       if (failed.length > 0) {
@@ -213,8 +230,12 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       core.setOutput('updated', passed.length);
       core.setOutput('failed', failed.length);
     });
-  } catch (error: any) {
-    core.error(error);
-    core.setFailed(error.message);
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      core.error(error);
+      core.setFailed(error.message);
+    } else {
+      core.error('An unknown error occurred while processing the action.');
+    }
   }
 }
