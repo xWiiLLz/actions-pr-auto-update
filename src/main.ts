@@ -89,7 +89,7 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
 
       return prs.filter((pr) => {
         let allow = true;
-        const print = `Excluding [#${pr.number} ${pr.title}](${pr.url})`;
+        const print = `Excluding #${pr.number} ${pr.title} | ${pr.url}`;
         if (!includeDrafts && isDraft(pr)) {
           core.info(`${print} due to draft status.`);
           return false;
@@ -167,19 +167,24 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
     /* Find out which pull requests exist to meet these requirements */
     const prs: ReturnPullData = [];
     if (typeof limit !== 'undefined') {
-      const pages = Math.ceil(limit / 100);
+      const pages = Math.ceil(limit / 100); // limit = 10, pages = 1; limit = 101, pages = 2
       do {
+        if (prs.length >= limit) break;
+
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const nextPage = await fetchPullRequests(client!.rest, pages === 1 ? limit : 100);
-        if (!nextPage) break;
+        if (!nextPage || nextPage.status !== 200 || !nextPage.data || nextPage.data.length === 0) break;
 
-        const cleaned = filterPullRequests(nextPage.data) ?? [];
-        prs.push(...cleaned);
-      } while (prs.length < limit && prs.length < 100 * pages);
+        // if we have a result, filter out the PRs that don't meet the requirements
+        // this must be done here so we know if we need to fetch another page
+        prs.push(...(filterPullRequests(nextPage.data) ?? []));
+      } while (prs.length < limit); // && prs.length < 100 * pages);
     } else {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const page = await fetchPullRequests(client!.rest);
-      if (page) prs.push(...(filterPullRequests(page.data) ?? []));
+      if (page && page.status === 200 && page.data && page.data.length > 0) {
+        prs.push(...(filterPullRequests(page.data) ?? []));
+      }
     }
 
     /* No PRs? No problem! */
@@ -197,10 +202,11 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
     core.info(`Found ${prs.length} pull requests to update:`);
     await Promise.all(
       prs.map(async (pr) => {
-        core.info(`- #${pr.number} [${pr.title}](${pr.url}})`);
+        core.info(`- #${pr.number} ${pr.title} | ${pr.url}}`);
         /* @todo Figure out how to configure rebase updates */
         const result = await client.rest.pulls.updateBranch({
           ...github.context.repo,
+          expected_head_sha: pr.head.sha,
           pull_number: pr.number,
         });
         return { result, pr };
@@ -216,13 +222,13 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       results = results.sort((a, b) => a.pr.number - b.pr.number);
 
       core.info(
-        `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 as 202 ? '❌' : '✅'}  #${r.pr.number} [${r.pr.title}](${r.pr.url})`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`,
+        `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 as 202 ? '❌' : '✅'}  #${r.pr.number} ${r.pr.title} | ${r.pr.url}`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`,
       );
 
       if (failed.length > 0) {
         core.warning(
           failed
-            .map((r) => `${r.result.data.message}\n[${r.result.data.url}](${r.result.data.url})\n`)
+            .map((r) => `${r.result.data.message}\n${r.result.data.url} | ${r.result.data.url}\n`)
             .join('\n'),
         );
       }
