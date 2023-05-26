@@ -1,7 +1,7 @@
 {
   "private": "true",
   "name": "actions-pr-auto-update",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A configurable GitHub Action to keep pull requests up-to-date.",
   "license": "MIT",
   "author": "Cassondra Roberts <castastrophe@users.noreply.github.com> (https://allons-y.llc)",
