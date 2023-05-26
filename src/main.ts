@@ -9,26 +9,28 @@ type PRUpdateRun = Awaited<
 >;
 
 export default async function run(core: typeof Core, github: typeof GitHub): Promise<void> {
-    function fetchInput(
-      key: string,
-      required: boolean = false,
-      fallback: string | undefined = undefined,
-    ): string | undefined {
-      let value: string | undefined;
-      try {
-        value = core.getInput(key, { required }) ?? fallback;
-      } catch (error: any) {
-        core.error(error);
-        core.setFailed(error.message);
-      }
-
-      return value;
+  function fetchInput(
+    key: string,
+    required: boolean = false,
+    fallback: string | undefined = undefined,
+  ): string | undefined {
+    let value: string | undefined;
+    try {
+      value = core.getInput(key, { required }) ?? fallback;
+    } catch (error: any) {
+      core.error(error);
+      core.setFailed(error.message);
     }
 
-    async function fetchPullRequests(
-      endpoint: RestEndpointMethods,
-    ): PRListPromise {
-      return await endpoint.pulls.list({
+    return value;
+  }
+
+  async function fetchPullRequests(
+    endpoint: RestEndpointMethods,
+    limit: number = 100,
+  ): Promise<Awaited<PRListPromise> | void> {
+    try {
+      const result = await endpoint.pulls.list({
         // Pass along the context for the repo
         ...github.context.repo,
         base: github.context.payload.ref ?? 'main',
@@ -37,15 +39,41 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
         sort: 'updated',
         direction: 'desc',
         state: 'open',
-        per_page: 100,
+        per_page: limit,
       });
+
+      if (result.data.length > 0) {
+        core.info(`${result.data.length} open pull requests returned; sorted by most recently updated.`);
+      } else {
+        core.info(`No open pull requests returned where ${github.context.payload.ref ?? 'main'} is the base branch.`);
+      }
+
+      return result;
+    } catch (error: any) {
+      core.error(error);
+      core.setFailed(error.message);
     }
+  }
 
-    function filterPullRequests(prs: ReturnPullData): ReturnPullData {
-      if (prs.length === 0) return [];
+  function filterPullRequests(prs: ReturnPullData): ReturnPullData | void {
+    const initialCount = prs.length;
+    if (initialCount === 0) return prs;
 
+    const isBot = (pr: ReturnPullData[number]): boolean => {
+      return pr.user?.name === 'dependabot[bot]' || pr.user?.type === 'Bot';
+    };
+
+    const isDraft = (pr: ReturnPullData[number]): boolean => {
+      return pr.draft === true;
+    };
+
+    try {
       // Always exclude dependabot and other bot PRs
-      prs = prs.filter((pr) => pr.user?.name !== 'dependabot[bot]' && pr.user?.type !== 'Bot');
+      prs = prs.filter((pr) => {
+        if (isBot(pr)) core.info(`Excluding bot PR: ${pr.title}`);
+        return !isBot(pr);
+      });
+      if (prs.length !== initialCount) core.info(`Excluded ${initialCount - prs.length} bot PRs.`);
 
       const includeDrafts: boolean | undefined =
         fetchInput('include_drafts') === 'true' ? true : false;
@@ -66,111 +94,127 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
         typeof allowLabels === 'undefined' &&
         typeof denyLabels === 'undefined' &&
         includeDrafts
-      )
+      ) {
+        core.info(`No limiting filters were provided, returning all ${prs.length} PRs, including drafts.`);
         return prs;
+      }
 
       return prs.filter((pr) => {
         let allow = true;
-        if (!includeDrafts && pr.draft === true) return false;
+        const print = `Excluding [#${pr.number} ${pr.title}](${pr.url})`;
+        if (!includeDrafts && isDraft(pr)) {
+          core.info(`${print} due to draft status.`);
+          return false;
+        }
 
         if (typeof allowLabels !== 'undefined' && allowLabels.length !== 0) {
           allow = pr.labels.some((label) => allowLabels.includes(label.name));
+          if (!allow) core.info(`${print} as none of the required labels (${allowLabels.join(', ')}) were present.`);
         }
 
         if (typeof denyLabels !== 'undefined' && denyLabels.length !== 0) {
           allow = pr.labels.every((label) => !denyLabels.includes(label.name));
+          if (!allow) core.info(`${print} because one of the blocking labels (${denyLabels.join(', ')}) was present.`);
         }
 
         return allow;
       });
+    } catch (error: any) {
+      core.error(error);
+      core.setFailed(error.message);
+    }
+  }
+
+  try {
+    /* Fetch the token value */
+    const token: string | undefined = process.env.GITHUB_TOKEN ?? github.token;
+
+    if (typeof token === 'undefined' || token.length === 0) {
+      core.error(new Error('No token could be found. Please provide a token to use this action or use the GITHUB_TOKEN environment variable.'));
+      core.setFailed('No token could be found. Please provide a token to use this action or use the GITHUB_TOKEN environment variable.');
+      return;
     }
 
-  /* Fetch the token value */
-  const token: string | undefined = fetchInput('GITHUB_TOKEN', true, process.env.GITHUB_TOKEN);
+    let client: ReturnType<typeof github.getOctokit> = github.getOctokit(token);
 
-  if (typeof token === 'undefined' || token.length === 0) {
-    core.error('No token provided. Please provide a token to use this action.');
-    core.setFailed(
-      'No token provided. Please provide a token to use this action.',
-    );
-    return;
-  }
+    if (typeof client === 'undefined') {
+      core.error(new Error('Access was not granted. Please ensure the provided github token has the necessary access to the repository.'));
+      core.setFailed('Access was not granted. Please ensure the provided github token has the necessary access to the repository.');
+      return;
+    }
 
-  let client: ReturnType<typeof github.getOctokit>;
-  try {
-    client = github.getOctokit(token);
-  } catch (error: any) {
-    core.error(error);
-    core.setFailed(error.message);
-    return;
-  }
+    const strhold = fetchInput('limit');
+    const limit: number | undefined =
+      typeof strhold !== 'undefined' && strhold.length !== 0
+        ? parseInt(strhold, 10)
+        : undefined;
 
-  const strhold = fetchInput('limit');
-  const limit: number | undefined =
-    typeof strhold !== 'undefined' && strhold.length !== 0
-      ? parseInt(strhold, 10)
-      : undefined;
+    /* Find out which pull requests exist to meet these requirements */
+    const prs: ReturnPullData = [];
+    if (typeof limit !== 'undefined') {
+      const pages = Math.ceil(limit / 100);
+      do {
+        const nextPage = await fetchPullRequests(client.rest as any, pages === 1 ? limit : 100);
+        if (!nextPage) break;
 
-  /* Find out which pull requests exist to meet these requirements */
-  const prs: ReturnPullData = [];
-  if (typeof limit !== 'undefined') {
-    const pages = Math.ceil(limit / 100);
-    do {
-      const nextPage: Awaited<PRListPromise> = await fetchPullRequests(client.rest as any);
-      const cleaned = filterPullRequests(nextPage.data);
-      prs.push(...cleaned);
-    } while (prs.length < limit && prs.length < 100 * pages);
-  } else {
-    const page = await fetchPullRequests(client.rest as any);
-    prs.push(...filterPullRequests(page.data));
-  }
+        const cleaned = filterPullRequests(nextPage.data) ?? [];
+        prs.push(...cleaned);
+      } while (prs.length < limit && prs.length < 100 * pages);
+    } else {
+      const page = await fetchPullRequests(client.rest as any);
+      if (page) prs.push(...(filterPullRequests(page.data) ?? []));
+    }
 
-  /* No PRs? No problem! */
-  if (prs.length === 0) {
-    core.info('No pull requests found that meet the requirements.');
-    return core.setOutput('updated', 0);
-  }
+    /* No PRs? No problem! */
+    if (prs.length === 0) {
+      core.info('No pull requests found that meet the requirements.');
+      return core.setOutput('updated', 0);
+    }
 
-  if (typeof limit !== 'undefined' && prs.length > limit) {
-    core.warning(
-      `There are ${prs.length} PRs that meet the requirements, but as the limit is set to ${limit}, the remaining will be skipped.`,
-    );
-  }
-
-  await Promise.all(
-    prs.map((pr) => {
-      /* @todo Figure out how to configure rebase updates */
-      return client.rest.pulls.updateBranch({
-        ...github.context.repo,
-        pull_number: pr.number,
-      });
-    }),
-  ).then((results: PRUpdateRun[]) => {
-    const passed = results.filter(
-      (result) => result.status === (200 as PRUpdateRun['status']),
-    );
-    const failed = results.filter(
-      (result) => result.status !== (200 as PRUpdateRun['status']),
-    );
-
-    core.info(
-      `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests\n - ${passed.length} succeeded.\n - ${failed.length} failed.`,
-    );
-
-    if (failed.length > 0) {
-      core.warning(
-        failed
-          .map((pr) => `${pr.data.message}\n[${pr.data.url}](${pr.data.url})\n`)
-          .join('\n'),
+    if (typeof limit !== 'undefined' && prs.length > limit) {
+      core.info(
+        `Limiting the PRs being updated to the first ${limit} to have been most recently updated, any remaining will be skipped.`,
       );
     }
 
-    core.setOutput('updated', passed.length);
-    core.setOutput('failed', failed.length);
-  })
-  .catch((err) => {
-    core.setFailed(err.message);
-  });
+    core.info(`Found ${prs.length} pull requests to update:`);
+    await Promise.all(
+      prs.map(async (pr) => {
+        core.info(`- #${pr.number} [${pr.title}](${pr.url}})`);
+        /* @todo Figure out how to configure rebase updates */
+        const result = await client.rest.pulls.updateBranch({
+          ...github.context.repo,
+          pull_number: pr.number,
+        });
+        return { result, pr };
+      })
+    ).then((results): void => {
+      const passed = results.filter(
+        (r) => r.result.status === (200 as PRUpdateRun['status']),
+      );
+      const failed = results.filter(
+        (r) => r.result.status !== (200 as PRUpdateRun['status']),
+      );
 
-  return;
+      results = results.sort((a, b) => a.pr.number - b.pr.number);
+
+      core.info(
+        `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 as any ? '❌' : '✅'}  #${r.pr.number} [${r.pr.title}](${r.pr.url})`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`,
+      );
+
+      if (failed.length > 0) {
+        core.warning(
+          failed
+            .map((r) => `${r.result.data.message}\n[${r.result.data.url}](${r.result.data.url})\n`)
+            .join('\n'),
+        );
+      }
+
+      core.setOutput('updated', passed.length);
+      core.setOutput('failed', failed.length);
+    });
+  } catch (error: any) {
+    core.error(error);
+    core.setFailed(error.message);
+  }
 }

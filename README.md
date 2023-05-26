@@ -30,7 +30,6 @@ jobs:
         - name: Update ALL THE PRS! 🎉
             uses: castastrophe/actions-pr-auto-update@v1.0.0
             with:
-                token: ${{ secrets.USER_TOKEN }}
                 # Optional: include a limit to the number of PRs to update (default is 100)
                 limit: 10
                 # Optional: set this to true if you want to include draft PRs in those to be updated
@@ -39,6 +38,9 @@ jobs:
                 exclude_labels: "do not update,skip update"
                 # Optional: include a list of labels, at least one of which are required to be present for the PR to be updated; these are comma-separated.
                 include_labels: "update,update me"
+            env:
+                # defaults to github.token
+                GITHUB_TOKEN: ${{ secrets.USER_TOKEN }}
 ```
 
 Once this is in place, every time a commit is pushed to one of the branches specified in your workflow, all pull requests targeting that branch (and that fall within the configured parameters) will be updated.

@@ -16,6 +16,7 @@
         "assets": [
           "bin/index.js",
           "CHANGELOG.md",
+          "README.md",
           "package.json",
           "yarn.lock"
         ],
