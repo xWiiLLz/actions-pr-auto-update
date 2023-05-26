@@ -167,7 +167,7 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
     /* Find out which pull requests exist to meet these requirements */
     const prs: ReturnPullData = [];
     if (typeof limit !== 'undefined') {
-      const pages = Math.ceil(limit / 100); // limit = 10, pages = 1; limit = 101, pages = 2
+      let pages = Math.ceil(limit / 100); // limit = 10, pages = 1; limit = 101, pages = 2
       do {
         if (prs.length >= limit) break;
 
@@ -177,8 +177,15 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
 
         // if we have a result, filter out the PRs that don't meet the requirements
         // this must be done here so we know if we need to fetch another page
-        prs.push(...(filterPullRequests(nextPage.data) ?? []));
-      } while (prs.length < limit); // && prs.length < 100 * pages);
+        const filtered = filterPullRequests(nextPage.data) ?? [];
+        if (filtered.length > 0) {
+          filtered.forEach((pr) => {
+            // Don't add duplicates
+            if (prs.some((p) => p.number === pr.number)) return;
+            prs.push(pr);
+          });
+        }
+      } while (prs.length < limit && pages-- > 0);
     } else {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const page = await fetchPullRequests(client!.rest);
