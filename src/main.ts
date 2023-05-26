@@ -185,7 +185,7 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
             prs.push(pr);
           });
         }
-      } while (prs.length < limit && pages-- > 0);
+      } while (prs.length < limit && --pages > 0);
     } else {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const page = await fetchPullRequests(client!.rest);
@@ -206,16 +206,18 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       );
     }
 
-    core.info(`Found ${prs.length} pull requests to update:`);
+    core.info(`Found ${prs.length} pull requests to update.\n\n`);
     await Promise.all(
       prs.map(async (pr) => {
-        core.info(`- #${pr.number} ${pr.title} | ${pr.url}}`);
+        core.debug(`Attempting to update #${pr.number} ${pr.title} ${pr.url}`);
         /* @todo Figure out how to configure rebase updates */
         const result = await client.rest.pulls.updateBranch({
           ...github.context.repo,
           expected_head_sha: pr.head.sha,
           pull_number: pr.number,
         });
+
+        core.debug(`Result: ${result.status} ${result.status !== 200 as 202 ? `${result.data.message}\n${result.url}` : ''}`);
         return { result, pr };
       })
     ).then((results): void => {
@@ -229,16 +231,8 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
       results = results.sort((a, b) => a.pr.number - b.pr.number);
 
       core.info(
-        `\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 as 202 ? '❌' : '✅'}  #${r.pr.number} ${r.pr.title} | ${r.pr.url}`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`,
+        `\n\n-------------------------\nAttempted to update ${results.length} pull request${results.length === 1 ? '' : 's'}:\n${results.map(r => `  ${r.result.status !== 200 as 202 ? '❌' : '✅'}  #${r.pr.number} ${r.pr.title} | ${r.pr.url}`).join('\n')}\n-------------------------\n\nSummary\n---\n  ${passed.length} succeeded.\n  ${failed.length} failed.`,
       );
-
-      if (failed.length > 0) {
-        core.warning(
-          failed
-            .map((r) => `${r.result.data.message}\n${r.result.data.url} | ${r.result.data.url}\n`)
-            .join('\n'),
-        );
-      }
 
       core.setOutput('updated', passed.length);
       core.setOutput('failed', failed.length);

@@ -12942,7 +12942,7 @@ function run(core, github) {
             /* Find out which pull requests exist to meet these requirements */
             const prs = [];
             if (typeof limit !== 'undefined') {
-                const pages = Math.ceil(limit / 100); // limit = 10, pages = 1; limit = 101, pages = 2
+                let pages = Math.ceil(limit / 100); // limit = 10, pages = 1; limit = 101, pages = 2
                 do {
                     if (prs.length >= limit)
                         break;
@@ -12952,8 +12952,16 @@ function run(core, github) {
                         break;
                     // if we have a result, filter out the PRs that don't meet the requirements
                     // this must be done here so we know if we need to fetch another page
-                    prs.push(...((_b = filterPullRequests(nextPage.data)) !== null && _b !== void 0 ? _b : []));
-                } while (prs.length < limit); // && prs.length < 100 * pages);
+                    const filtered = (_b = filterPullRequests(nextPage.data)) !== null && _b !== void 0 ? _b : [];
+                    if (filtered.length > 0) {
+                        filtered.forEach((pr) => {
+                            // Don't add duplicates
+                            if (prs.some((p) => p.number === pr.number))
+                                return;
+                            prs.push(pr);
+                        });
+                    }
+                } while (prs.length < limit && --pages > 0);
             }
             else {
                 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -12970,22 +12978,18 @@ function run(core, github) {
             if (typeof limit !== 'undefined' && prs.length > limit) {
                 core.info(`Limiting the PRs being updated to the first ${limit} to have been most recently updated, any remaining will be skipped.`);
             }
-            core.info(`Found ${prs.length} pull requests to update:`);
+            core.info(`Found ${prs.length} pull requests to update.\n\n`);
             yield Promise.all(prs.map((pr) => __awaiter(this, void 0, void 0, function* () {
-                core.info(`- #${pr.number} ${pr.title} | ${pr.url}}`);
+                core.debug(`Attempting to update #${pr.number} ${pr.title} ${pr.url}`);
                 /* @todo Figure out how to configure rebase updates */
                 const result = yield client.rest.pulls.updateBranch(Object.assign(Object.assign({}, github.context.repo), { expected_head_sha: pr.head.sha, pull_number: pr.number }));
+                core.debug(`Result: ${result.status} ${result.status !== 200 ? `${result.data.message}\n${result.url}` : ''}`);
                 return { result, pr };
             }))).then((results) => {
                 const passed = results.filter((r) => r.result.status === 200);
                 const failed = results.filter((r) => r.result.status !== 200);
                 results = results.sort((a, b) => a.pr.number - b.pr.number);
-                core.info(`\n\n|-------------------------|\nAttempted to update ${results.length} pull requests:\n${results.map(r => `${r.result.status !== 200 ? '❌' : '✅'}  #${r.pr.number} ${r.pr.title} | ${r.pr.url}`).join('\n')}\n|-------------------------|\n✅ ${passed.length} succeeded.\n❌ ${failed.length} failed.`);
-                if (failed.length > 0) {
-                    core.warning(failed
-                        .map((r) => `${r.result.data.message}\n${r.result.data.url} | ${r.result.data.url}\n`)
-                        .join('\n'));
-                }
+                core.info(`\n\n-------------------------\nAttempted to update ${results.length} pull request${results.length === 1 ? '' : 's'}:\n${results.map(r => `  ${r.result.status !== 200 ? '❌' : '✅'}  #${r.pr.number} ${r.pr.title} | ${r.pr.url}`).join('\n')}\n-------------------------\n\nSummary\n---\n  ${passed.length} succeeded.\n  ${failed.length} failed.`);
                 core.setOutput('updated', passed.length);
                 core.setOutput('failed', failed.length);
             });
