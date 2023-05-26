@@ -7,6 +7,9 @@ on:
 jobs:
   autoupdate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
@@ -20,6 +23,5 @@ jobs:
       - name: Update all PRs
         uses: ./
         with:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           limit: 10
           include_drafts: true

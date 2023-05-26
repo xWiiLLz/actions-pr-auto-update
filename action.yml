@@ -1,7 +1,8 @@
 name: Auto-update pull requests
-description: Keep your pull requests up to date with base branch
+description: Keep your pull requests up-to-date with a base branch
+author: 'Cassondra Roberts'
 inputs:
-  GITHUB_TOKEN:
+  token:
     required: false
     description: 'Token used to perform API calls.'
     default: ${{ github.token }}
@@ -32,4 +33,4 @@ runs:
 
 branding:
   icon: git-pull-request
-  color: green
+  color: purple
