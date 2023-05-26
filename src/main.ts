@@ -86,11 +86,7 @@ export default async function run(core: typeof Core, github: typeof GitHub): Pro
     }
 
   /* Fetch the token value */
-  const token: string | undefined = fetchInput(
-    'token',
-    true,
-    fetchInput('GITHUB_TOKEN', true, process.env.GITHUB_TOKEN),
-  );
+  const token: string | undefined = fetchInput('GITHUB_TOKEN', true, process.env.GITHUB_TOKEN);
 
   if (typeof token === 'undefined' || token.length === 0) {
     core.error('No token provided. Please provide a token to use this action.');
