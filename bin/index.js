@@ -13660,13 +13660,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -13694,15 +13704,16 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports["default"] = run;
 __nccwpck_require__(3045);
 function run(core, github) {
-    var _a, _b, _c;
     return __awaiter(this, void 0, void 0, function* () {
-        function fetchPullRequests(endpoint, limit = 100) {
-            var _a, _b;
-            return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c;
+        function fetchPullRequests(endpoint_1) {
+            return __awaiter(this, arguments, void 0, function* (endpoint, limit = 100, repository = github.context.repo) {
+                var _a, _b;
                 try {
-                    const result = yield endpoint.pulls.list(Object.assign(Object.assign({}, github.context.repo), { base: (_a = github.context.payload.ref) !== null && _a !== void 0 ? _a : 'main', 
+                    const result = yield endpoint.pulls.list(Object.assign(Object.assign({}, repository), { base: (_a = github.context.payload.ref) !== null && _a !== void 0 ? _a : 'main', 
                         /* fetch the most recently updated PRs to keep them maintained first */
                         /* we're assuming these PRs are higher priority and/or closer to being merged */
                         sort: 'updated', direction: 'desc', state: 'open', per_page: limit }));
@@ -13768,12 +13779,16 @@ function run(core, github) {
                         return false;
                     }
                     if (typeof allowLabels !== 'undefined' && allowLabels.length !== 0) {
-                        allow = allow && pr.labels.some((label) => allowLabels.includes(label.name));
+                        allow =
+                            allow &&
+                                pr.labels.some((label) => allowLabels.includes(label.name));
                         if (!allow)
                             core.info(`${print} as none of the required labels (${allowLabels.join(', ')}) were present.`);
                     }
                     if (typeof denyLabels !== 'undefined' && denyLabels.length !== 0) {
-                        allow = allow && pr.labels.every((label) => !denyLabels.includes(label.name));
+                        allow =
+                            allow &&
+                                pr.labels.every((label) => !denyLabels.includes(label.name));
                         if (!allow)
                             core.info(`${print} because one of the blocking labels (${denyLabels.join(', ')}) was present.`);
                     }
@@ -13791,7 +13806,10 @@ function run(core, github) {
             }
         }
         // Attempt to connect to the GitHub REST API
-        const token = (_a = core.getInput('token', { required: true })) !== null && _a !== void 0 ? _a : process.env.GITHUB_TOKEN;
+        let token = core.getInput('token', { required: false });
+        if (!token || token === '') {
+            token = process.env.GITHUB_TOKEN;
+        }
         if (typeof token === 'undefined') {
             core.error('No token was provided.');
             core.setFailed('No token was provided.');
@@ -13804,9 +13822,8 @@ function run(core, github) {
             return;
         }
         /* Check if the token is valid */
-        let exit = false;
         try {
-            yield client.rest.users.getAuthenticated();
+            yield client.rest.pulls.list(Object.assign(Object.assign({}, github.context.repo), { base: (_a = github.context.payload.ref) !== null && _a !== void 0 ? _a : 'main', sort: 'updated', direction: 'desc', state: 'open', per_page: 0, page: 0 }));
         }
         catch (error) {
             if (error instanceof Error) {
@@ -13816,10 +13833,8 @@ function run(core, github) {
             else {
                 core.error('An unknown error occurred while authenticating with the GitHub API.');
             }
-            exit = true;
+            return process.exit(1);
         }
-        if (exit)
-            return;
         core.info('Successfully authenticated with the GitHub API.');
         if (github.context.payload.action === 'deleted') {
             core.info('The ref was deleted, so there is no need to update any pull requests.');
@@ -13830,48 +13845,50 @@ function run(core, github) {
             ? parseInt(strhold, 10)
             : undefined;
         /* Find out which pull requests exist to meet these requirements */
-        const prs = [];
+        const prs = new Map();
         if (typeof limit !== 'undefined' && limit > 100) {
             let pages = Math.ceil(limit / 100); // limit = 10, pages = 1; limit = 101, pages = 2
             do {
-                if (prs.length >= limit)
+                if (prs.size >= limit)
                     break;
                 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
                 const nextPage = yield fetchPullRequests(client.rest, pages === 1 ? limit : 100);
-                if (!nextPage || nextPage.status !== 200 || !nextPage.data || nextPage.data.length === 0)
+                if (!nextPage ||
+                    nextPage.status !== 200 ||
+                    !nextPage.data ||
+                    nextPage.data.length === 0)
                     break;
                 // if we have a result, filter out the PRs that don't meet the requirements
                 // this must be done here so we know if we need to fetch another page
                 const filtered = (_b = filterPullRequests(nextPage.data)) !== null && _b !== void 0 ? _b : [];
-                if (filtered.length > 0) {
-                    filtered.forEach((pr) => {
-                        // Don't add duplicates
-                        if (prs.some((p) => p.number === pr.number))
-                            return;
-                        prs.push(pr);
-                    });
+                for (const pr of filtered) {
+                    if (prs.size >= limit)
+                        break;
+                    prs.set(pr.number, pr);
                 }
-            } while (prs.length < limit && --pages > 0);
+            } while (prs.size < limit && --pages > 0);
         }
         else {
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             const page = yield fetchPullRequests(client.rest);
             if (page && page.status === 200 && page.data && page.data.length > 0) {
-                prs.push(...((_c = filterPullRequests(page.data)) !== null && _c !== void 0 ? _c : []));
+                for (const pr of (_c = filterPullRequests(page.data)) !== null && _c !== void 0 ? _c : []) {
+                    prs.set(pr.number, pr);
+                }
             }
         }
         /* No PRs? No problem! */
-        if (prs.length === 0) {
+        if (prs.size === 0) {
             core.info('No pull requests found that meet the requirements.');
             core.setOutput('updated', 0);
             core.setOutput('failed', 0);
             return;
         }
-        if (typeof limit !== 'undefined' && prs.length > limit) {
+        if (typeof limit !== 'undefined' && prs.size > limit) {
             core.info(`Limiting the PRs being updated to the first ${limit} to have been most recently updated, any remaining will be skipped.`);
         }
-        core.info(`Found ${prs.length} pull requests to update.\n\n`);
-        yield Promise.all(prs.map((pr) => __awaiter(this, void 0, void 0, function* () {
+        core.info(`Found ${prs.size} pull requests to update.\n\n`);
+        yield Promise.all([...prs.values()].map((pr) => __awaiter(this, void 0, void 0, function* () {
             core.debug(`Attempting to update ${`#${pr.number}`.yellow} ${pr.title} ${`${pr.url}`.underline.cyan}...`);
             let result;
             /* @todo Figure out how to configure rebase updates */
@@ -13884,23 +13901,26 @@ function run(core, github) {
                 core.info(error.message);
             }
             if (!result)
-                return;
-            core.debug(`Result: ${result.status} ${result.status !== 200 ? `${result.data.message}\n${`${result.url}`.underline.cyan}` : ''}`);
+                return { result, pr };
+            core.debug(`Result: ${result.status} ${result.status >= 300
+                ? `${result.data.message}\n${`${result.url}`.underline.cyan}`
+                : ''}`);
             return { result, pr };
         }))).then((results) => {
             if (!results)
                 return;
-            results = results.filter((r) => typeof r !== 'undefined');
-            const passed = results.filter((r) => r.result.status === 200);
-            const failed = results.filter((r) => r.result.status !== 200);
+            const isSuccessful = (r) => r.status >= 200 && r.status < 300;
+            const passed = results.filter((r) => r.result && isSuccessful(r.result));
+            const failed = results.filter((r) => !r.result || !isSuccessful(r.result));
             results = results.sort((a, b) => a.pr.number - b.pr.number);
-            core.info(`\n\n-------------------------\nAttempted to update ${results.length} pull request${results.length === 1 ? '' : 's'}:\n${results.map(r => `  ${r.result.status !== 200 ? '❌' : '✅'}  ${`#${r.pr.number}`.yellow} ${r.pr.title}\t${`${r.pr.number}`.underline.cyan}`).join('\n')}\n-------------------------\n\n${'Summary'.underline}\n---\n  ${`${passed.length}`.green} succeeded.\n  ${`${failed.length}`.red} failed.`);
+            core.info(`\n\n-------------------------\nAttempted to update ${results.length} pull request${results.length === 1 ? '' : 's'}:\n${results
+                .map((r) => `  ${r.result && isSuccessful(r.result) ? '✅' : '❌'}  ${`#${r.pr.number}`.yellow} ${r.pr.title}\t${`${r.pr.number}`.underline.cyan}`)
+                .join('\n')}\n-------------------------\n\n${'Summary'.underline}\n---\n  ${`${passed.length}`.green} succeeded.\n  ${`${failed.length}`.red} failed.`);
             core.setOutput('updated', passed.length);
             core.setOutput('failed', failed.length);
         });
     });
 }
-exports["default"] = run;
 
 
 /***/ }),

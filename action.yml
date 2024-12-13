@@ -28,7 +28,7 @@ outputs:
     description: 'The number of pull requests that failed to update.'
 
 runs:
-  using: node16
+  using: node20
   main: bin/index.js
 
 branding:
